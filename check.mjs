@@ -65,7 +65,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(new Date().toISOString(), JSON.stringify(ports));
     console.log("app:", JSON.stringify(await send(ports)));
   } catch (e) {
+    // Logged, not failed: GitHub emails on every failed scheduled run, and a hiccup at
+    // ChargePoint or the app shouldn't mean an email every 5 minutes. The next run tries again.
     console.log("failed:", e.message);
-    process.exitCode = 1;
   }
 }
