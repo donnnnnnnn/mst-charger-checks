@@ -1,5 +1,5 @@
-// MST charger spot checker. Runs on GitHub Actions every 5 minutes (see
-// .github/workflows/check.yml): reads the four Market Square Tower ChargePoint ports from
+// MST charger spot checker. Runs on GitHub Actions, one reading every 5 minutes (see
+// .github/workflows/check.yml, copy in check.yml here): reads the four Market Square Tower ChargePoint ports from
 // ChargePoint's public map and sends the reading to the MST Charging app, which keeps the
 // spot log (how long each spot has been taken; when one is likely to open).
 // No secrets: the app checks GitHub's signed OIDC token, which names this repository.
@@ -59,14 +59,32 @@ export async function send(ports) {
   return j;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// One reading, sent to the app. Logged, not thrown: GitHub emails on every failed run, and a
+// hiccup at ChargePoint or the app shouldn't mean an email. The next reading tries again.
+export async function checkOnce() {
   try {
     const ports = await readPorts();
     console.log(new Date().toISOString(), JSON.stringify(ports));
     console.log("app:", JSON.stringify(await send(ports)));
   } catch (e) {
-    // Logged, not failed: GitHub emails on every failed scheduled run, and a hiccup at
-    // ChargePoint or the app shouldn't mean an email every 5 minutes. The next run tries again.
-    console.log("failed:", e.message);
+    console.log(new Date().toISOString(), "failed:", e.message);
+  }
+}
+
+// GitHub starts scheduled runs late or not at all when it's busy (in practice this repo's
+// "every 5 minutes" ran every 5–10 HOURS, so the app's log had long holes and every spot showed
+// "in use since you opened the app"). So one run stays up and reads every 5 minutes itself, on
+// the clock (:02, :07, …), for CHECK_MINUTES (default: one reading and exit).
+const EVERY = 5 * 60e3, OFFSET = 2 * 60e3;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const until = Date.now() + Number(process.env.CHECK_MINUTES || 0) * 60e3;
+  await checkOnce();
+  for (;;) {
+    const next = Math.floor((Date.now() - OFFSET) / EVERY) * EVERY + EVERY + OFFSET;
+    if (next > until) break;
+    await sleep(next - Date.now());
+    await checkOnce();
   }
 }

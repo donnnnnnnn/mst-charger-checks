@@ -1,25 +1,48 @@
-# Every 5 minutes: read the four MST ChargePoint ports and send the reading to the app.
+# Read the four MST ChargePoint ports every 5 minutes and send each reading to the app.
 # A public repo, so GitHub Actions minutes are free. Nothing secret here: the app trusts the
 # run through GitHub's OIDC token (id-token: write), which names this repository.
+#
+# GitHub's own "every 5 minutes" schedule turned out to fire only every 5–10 hours, so each run
+# stays up for ~5¾ hours reading every 5 minutes, then starts the next run itself. The hourly
+# schedule is only a backstop that restarts the chain if it ever breaks. The concurrency group
+# keeps it to one run at a time (an extra start just waits, or replaces the waiting one).
+# To stop the checks: Actions → check → ⋯ → Disable workflow.
 name: check
 on:
   schedule:
-    - cron: "2-59/5 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 permissions:
   contents: write   # only for the monthly keep-alive below
-  id-token: write
+  id-token: write   # the app checks this run's signed token
+  actions: write    # to start the next run
 concurrency:
   group: check
   cancel-in-progress: false
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 355
     steps:
+      - name: Note the start time
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
-      - name: Read the ports and send them to the app
+      - name: Read the ports every 5 minutes and send them to the app
+        env:
+          CHECK_MINUTES: "340"
         run: node check.mjs
+      # Only after a real stretch of readings, so a run that breaks straight away can't keep
+      # restarting itself; if this run died early, the hourly schedule picks it back up.
+      - name: Start the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ $(( $(date +%s) - STARTED )) -ge 1200 ]; then
+            gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref main || gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref main
+          else
+            echo "Ran under 20 minutes; leaving the restart to the hourly schedule."
+          fi
       # GitHub turns off schedules in public repos after 60 days without a commit, so once a
       # month this records the date in keepalive.txt.
       - name: Keep the schedule alive
